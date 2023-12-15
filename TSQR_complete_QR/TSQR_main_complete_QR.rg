@@ -22,6 +22,14 @@ task print_time(t_micro : double)
   c.printf("Total Time : %f s\n", 1e-6*(t_micro))
 end
 
+task print_matrix(matrix : region(ispace(int2d), double),
+                  prefix : rawstring)
+where reads(matrix) do
+    for idx in matrix.ispace do
+      c.printf("%s[%d, %d] = %f\n", prefix, idx.x, idx.y, matrix[idx])
+    end
+end
+
 --~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 --~~~~                MAIN                    ~~~~
 ----~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -187,6 +195,12 @@ task main()
 
     c.legion_runtime_end_trace(__runtime(), __context(), 0)
   end  --end tree levels
+
+  -- var Q_level = Q_mat_prod[L-1]
+  -- __demand(__index_launch)
+  -- for p in mat_procs do
+  --   print_matrix(Q_level[p], "Q")
+  -- end
 
   __fence(__execution, __block)
   var ts_end = c.legion_get_current_time_in_micros()
