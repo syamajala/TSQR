@@ -4,6 +4,7 @@ local clib = regentlib.c
 local cmath = terralib.includec("math.h")
 local std = terralib.includec("stdlib.h")
 local cstr = terralib.includec("string.h")
+local helper = require("helper_functions_TSQR")
 
 --BLAS info
 local blas_lib = terralib.includecstring [[
@@ -273,32 +274,6 @@ elseif use_hip then
   end
 end
 
---task to copy the upper diagonal results of the dgeqrf BLAS subroutine to corresponding R region
-__demand(__cuda, __local)
-task get_R_matrix(p        : int,
-                  blocks   : int,
-                  n        : int,
-                  matrix   : region(ispace(int2d), double),
-                  R_matrix : region(ispace(int2d), double))
-where reads(matrix), writes(R_matrix)
-do
-  var r_point : int2d
-  var x_shift : int
-  var offset : int = 0
-
-  for j = 0, p do
-    offset += blocks
-  end
-
-  for i in matrix do
-    x_shift = i.x - offset
-    if i.y >= x_shift then
-      r_point = {x = i.x - offset + p*n, y = i.y}
-      R_matrix[r_point] = matrix[i]
-    end
-  end
-end
-
 __demand(__cuda)
 task blas_exp.local_qr_factorize(layout : int,
                                  p      : int,
@@ -330,7 +305,7 @@ do
                 regentlib.assert(layout == lapacke.LAPACK_COL_MAJOR, 'Expected column major layout.')
                 var TAU = alloc_double_gpu(K)
                 dgeqrf_gpu_terra(layout, M, N, rectA, __physical(A)[0], __fields(A)[0], TAU)
-                get_R_matrix(p, blocks, n, A, R)
+                helper.get_R_matrix(p, blocks, n, A, R)
                 dorgqr_gpu_terra(layout, M, N, K, rectA, __physical(A)[0], __fields(A)[0], TAU)
                 cuda_runtime.cudaFree(TAU)
                    end
@@ -339,7 +314,7 @@ do
                 regentlib.assert(layout == lapacke.LAPACK_COL_MAJOR, 'Expected column major layout.')
                 var TAU = alloc_double_gpu(K)
                 dgeqrf_gpu_terra(layout, M, N, rectA, __physical(A)[0], __fields(A)[0], TAU)
-                get_R_matrix(p, blocks, n, A, R)
+                helper.get_R_matrix(p, blocks, n, A, R)
                 dorgqr_gpu_terra(layout, M, N, K, rectA, __physical(A)[0], __fields(A)[0], TAU)
                 hip_runtime.hipFree(TAU)
                    end
@@ -350,7 +325,7 @@ do
   else
     var TAU = alloc_double_cpu(K)
     dgeqrf_cpu_terra(layout, M, N, rectA, __physical(A)[0], __fields(A)[0], TAU)
-    get_R_matrix(p, blocks, n, A, R)
+    helper.get_R_matrix(p, blocks, n, A, R)
     dorgqr_cpu_terra(layout, M, N, K, rectA, __physical(A)[0], __fields(A)[0], TAU)
     clib.free(TAU)
   end

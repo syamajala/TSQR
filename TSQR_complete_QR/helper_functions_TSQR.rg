@@ -18,9 +18,9 @@ end
 
 --task to initialize the matrix region if no input file is provided
 task helper_exp.initialize(x : int, m : int, matrix : region(ispace(int2d), double))
-where reads(matrix), writes(matrix)
+where
+  reads writes(matrix)
 do
-
   fill(matrix, 1.0)
 
   for i in matrix do
@@ -129,31 +129,42 @@ end
 --~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 --task to copy the upper diagonal results of the dgeqrf BLAS subroutine to corresponding R region
--- task helper_exp.get_R_matrix(p : int, m_vec : region(ispace(int1d), int), n : int, matrix : region(ispace(int2d), double), R_matrix : region(ispace(int2d), double))
+__demand(__cuda, __local)
+task helper_exp.get_R_matrix(p        : int,
+                             blocks   : int,
+                             n        : int,
+                             matrix   : region(ispace(int2d), double),
+                             R_matrix : region(ispace(int2d), double))
+where
+  reads(matrix),
+  writes(R_matrix)
+do
+  var r_point : int2d
+  var x_shift : int
+  var offset : int = 0
 
--- where reads(matrix, m_vec), writes(R_matrix)
--- do
---   var r_point : int2d
---   var x_shift : int
---   var offset : int = 0
+  for j = 0, p do
+    offset += blocks
+  end
 
---   for j = 0, p do
---     offset += m_vec[j]
---   end
+  for i in matrix do
+    x_shift = i.x - offset
+    if i.y >= x_shift then
+      r_point = {x = i.x - offset + p*n, y = i.y}
+      R_matrix[r_point] = matrix[i]
+    end
+  end
+end
 
---   for i in matrix do
---     x_shift = i.x - offset
---     if i.y >= x_shift then
---       r_point = {x = i.x - offset + p*n, y = i.y}
---       R_matrix[r_point] = matrix[i]
---     end
---   end
--- end
 
 --task to copy the computed Q matrix from the dorgqr BLAS subroutine to the processor's "unique" region
-task helper_exp.get_Q_matrix(Q_matrix : region(ispace(int2d), double), temp_matrix : region(ispace(int2d), double))
+__demand(__cuda)
+task helper_exp.get_Q_matrix(Q_matrix    : region(ispace(int2d), double),
+                             temp_matrix : region(ispace(int2d), double))
 
-where reads(temp_matrix), writes(Q_matrix)
+where
+  reads(temp_matrix),
+  writes(Q_matrix)
 do
   var x_shift : int = Q_matrix.bounds.lo.x - temp_matrix.bounds.lo.x
 
@@ -163,10 +174,13 @@ do
 end
 
 --task to copy a matrix from one region to another
-task helper_exp.copy_function(source_region : region(ispace(int2d), double), destination_region : region(ispace(int2d), double))
-where reads(source_region), writes(destination_region)
+__demand(__cuda)
+task helper_exp.copy_function(source_region      : region(ispace(int2d), double),
+                              destination_region : region(ispace(int2d), double))
+where
+  reads(source_region),
+  writes(destination_region)
 do
-
   var x_shift : int = destination_region.bounds.lo.x - source_region.bounds.lo.x
 
   for i in source_region do

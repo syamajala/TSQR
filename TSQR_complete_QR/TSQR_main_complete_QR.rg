@@ -62,11 +62,11 @@ task main()
     --h.initialize_mat_vec(P, m_vec, mat_vec_file)
   --else
     -- fill(m_vec, m/P) --assume equal division if no submatrix dimensions given
+  var m_vec = m/P
   --end
 
   --color the matrix subregions
-  -- var matrix_part = h.color_matrix(m_vec, q_dims, matrix, mat_procs)
-  var matrix_part = h.color_matrix(m/P, matrix, mat_procs)
+  var matrix_part = h.color_matrix(m_vec, matrix, mat_procs)
 
   --initialize the matrix
   --[[
@@ -80,7 +80,7 @@ task main()
     ]]--
     __demand(__index_launch)
     for p in mat_procs do
-      h.initialize(p, m/P, matrix_part[p])
+      h.initialize(p, m_vec, matrix_part[p])
     end
   --end
 
@@ -143,10 +143,11 @@ task main()
   --find Q matrices
   __demand(__index_launch)
   for p in mat_procs do
-    blas.local_qr_factorize(lapacke.LAPACK_COL_MAJOR, p, m/P, m, n, matrix_part[p], R_matrix_part[p])
+    blas.local_qr_factorize(lapacke.LAPACK_COL_MAJOR, p, m_vec, m, n, matrix_part[p], R_matrix_part[p])
   end
 
   for k = 1, (L+1) do --successive levels of the tree
+    c.legion_runtime_begin_trace(__runtime(), __context(), 0, false)
 
     --Steps (not necessarily sequential):
     --1. Each processor shares its current R matrix with its neighbor (butterfly all-reduction pattern).
@@ -175,7 +176,7 @@ task main()
     --5. Calculate Q matrices for this level of the tree
     __demand(__index_launch)
     for p in mat_procs do
-      blas.local_qr_factorize(lapacke.LAPACK_COL_MAJOR, p, m/P, m, n, R_matrix_temp_part[p], R_matrix_part[p])
+      blas.local_qr_factorize(lapacke.LAPACK_COL_MAJOR, p, m_vec, m, n, R_matrix_temp_part[p], R_matrix_part[p])
     end
 
     var Q_level = Q_mat_prod[(k - 1)]
@@ -184,6 +185,7 @@ task main()
       h.get_Q_matrix(Q_level[p], R_matrix_temp_part[p])
     end
 
+    c.legion_runtime_end_trace(__runtime(), __context(), 0)
   end  --end tree levels
 
   __fence(__execution, __block)
