@@ -16,35 +16,6 @@ terra helper_exp.file_exists(filename : rawstring)
   return true
 end
 
-terra initialize_mat_vec_(P : int, m_vec : region(ispace(int1d), int), mat_vec_file : rawstring)
-  --[[
-  var count : uint
-  var line = c.malloc(P)
-  var i : int = 0
-  
-  var m_vec_file = c.fopen(mat_vec_file, "r")
-   
-  while c.getline(&line, &count, m_vec_file) ~= -1 do
-    while count > 0 do
-      c.sscanf(line, "%d", &m_vec[i])
-      i = i + 1
-      count = count - 1
-    end
-  end 
-  
-  c.fclose(mat_vec_file)
-  ]]--
-end
-
---task to retrieve the dimensions of the initial matrix subregion 
---[[
-task helper_exp.initialize_mat_vec(P : int, m_vec : region(ispace(int1d), int), mat_vec_file : rawstring)
-where reads writes(m_vec)
-do
-  --initialize_mat_vec_(P, m_vec, mat_vec_file)
-end
-]]--
-
 --task to initialize the matrix region if no input file is provided
 task helper_exp.initialize(x : int, m : int, matrix : region(ispace(int2d), double))
 where reads(matrix), writes(matrix)
@@ -66,37 +37,23 @@ end
 --~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 --task to partition the matrix for matrix multiplication
-task helper_exp.color_matrix(m_vec : region(ispace(int1d), int), q_dim : region(ispace(int1d), int), matrix : region(ispace(int2d), double), 
-                  mat_colors : ispace(int1d))
+task helper_exp.color_matrix(blocks     : int,
+                             matrix     : region(ispace(int2d), double),
+                             mat_colors : ispace(int1d))
+  var t : transform(2, 1)
 
-where reads(m_vec, q_dim)
-do
+  t[{0, 0}] = blocks
+  t[{1, 0}] = 0
 
-  var start_point = 0
-
-  var matrix_coloring = c.legion_domain_point_coloring_create()
-
-  --color the matrix
-  for i in mat_colors do
-
-   var length : int = m_vec[i]
- 
-   c.legion_domain_point_coloring_color_domain(matrix_coloring, i, rect2d {lo = {x = start_point, y = 0}, 
-                                                                   hi = {x = (start_point + length - 1), y = q_dim[i] - 1}})
-
-   start_point += length
- 
-  end
-
-  var mat_part = partition(disjoint, matrix, matrix_coloring, mat_colors)
-  c.legion_domain_point_coloring_destroy(matrix_coloring)
-  
-  return mat_part
-
+  var e = rect2d{ int2d{0, 0}, int2d{blocks-1, blocks-1} }
+  return restrict(disjoint, complete, matrix, t, e, mat_colors)
 end
 
 --task to partition a 2D region by processor id
-task helper_exp.processor_matrix_part(dim_x : int, levels : int, matrix : region(ispace(int2d), double), mat_colors : ispace(int1d))
+task helper_exp.processor_matrix_part(dim_x      : int,
+                                      levels     : int,
+                                      matrix     : region(ispace(int2d), double),
+                                      mat_colors : ispace(int1d))
 
   var start_point = matrix.bounds.lo.x
   var length : int = dim_x
@@ -105,73 +62,66 @@ task helper_exp.processor_matrix_part(dim_x : int, levels : int, matrix : region
 
   --color the matrix
   for j = 0,levels do
-
     for i in mat_colors do
-
-      c.legion_multi_domain_point_coloring_color_domain(matrix_coloring, i, rect2d {lo = {x = start_point, y = matrix.bounds.lo.y}, 
-                                                                   hi = {x = (start_point + length - 1), y = matrix.bounds.hi.y}})
+      c.legion_multi_domain_point_coloring_color_domain(matrix_coloring, i,
+                                                        rect2d {lo = {x = start_point, y = matrix.bounds.lo.y},
+                                                                hi = {x = (start_point + length - 1), y = matrix.bounds.hi.y}})
 
       start_point += length
 
     end
- 
   end
 
   var mat_part = partition(disjoint, matrix, matrix_coloring, mat_colors)
   c.legion_multi_domain_point_coloring_destroy(matrix_coloring)
-  
+
   return mat_part
 
 end
 
+--task to partition a 2D region by processor id
+-- __demand(__leaf)
+-- task processor_matrix_part(dim_x  : int,
+--                            bounds : rect2d,
+--                            lr     : region(ispace(int2d), rect2d))
+-- where writes(lr) do
+--   var start_point = bounds.lo.x
+--   var length : int = dim_x
+
+--   --color the matrix
+--   for j = 0, lr.ispace.bounds.hi.x+1 do
+--     for i = 0, lr.ispace.bounds.hi.y+1 do
+--       lr[int2d{j, i}] = rect2d {lo = {x = start_point, y = bounds.lo.y},
+--                                 hi = {x = (start_point + length - 1), y = bounds.hi.y}}
+--       start_point += length
+--     end
+--   end
+-- end
+
 --task to create a 1D partition of a 2D region
-task helper_exp.equal_matrix_part(dim_x : int, matrix : region(ispace(int2d), double), mat_colors : ispace(int1d))
+task helper_exp.equal_matrix_part(dim_x      : int,
+                                  matrix     : region(ispace(int2d), double),
+                                  mat_colors : ispace(int1d))
+  var t : transform(2, 1)
 
-  var start_point = matrix.bounds.lo.x
-  var length : int = dim_x
+  t[{0, 0}] = dim_x
+  t[{1, 0}] = 0
 
-  var matrix_coloring = c.legion_domain_point_coloring_create()
+  var e = rect2d{ int2d{0, 0}, int2d{dim_x-1, dim_x-1} }
 
-  --color the matrix
-  for i in mat_colors do
-    
-    c.legion_domain_point_coloring_color_domain(matrix_coloring, i, rect2d {lo = {x = start_point, y = matrix.bounds.lo.y}, 
-                                                                   hi = {x = (start_point + length - 1), y = matrix.bounds.hi.y}})
-
-    start_point += length
- 
-  end
-
-  var mat_part = partition(disjoint, matrix, matrix_coloring, mat_colors)
-  c.legion_domain_point_coloring_destroy(matrix_coloring)
-  
-  return mat_part
-
+  return restrict(disjoint, complete, matrix, t, e, mat_colors)
 end
 
 --task to create a 1D partition of a 2D region
 task helper_exp.copy_matrix_part(dim_x : int, offset : int, matrix : region(ispace(int2d), double), mat_colors : ispace(int1d))
+  var t : transform(2, 1)
 
-  var start_point = matrix.bounds.lo.x + offset
-  var length : int = dim_x
+  t[{0, 0}] = dim_x
+  t[{1, 0}] = 0
 
-  var matrix_coloring = c.legion_domain_point_coloring_create()
+  var e = rect2d{ int2d{offset, 0}, int2d{offset + (dim_x/2) - 1, dim_x - 1} }
 
-  --color the matrix
-  for i in mat_colors do
-   
-    c.legion_domain_point_coloring_color_domain(matrix_coloring, i, rect2d {lo = {x = start_point, y = matrix.bounds.lo.y}, 
-                                                                   hi = {x = (start_point + length/2 - 1), y = matrix.bounds.hi.y}})
-
-    start_point += length
- 
-  end
-
-  var mat_part = partition(disjoint, matrix, matrix_coloring, mat_colors)
-  c.legion_domain_point_coloring_destroy(matrix_coloring)
-  
-  return mat_part
-
+  return restrict(disjoint, complete, matrix, t, e, mat_colors)
 end
 
 --~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -179,26 +129,26 @@ end
 --~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 --task to copy the upper diagonal results of the dgeqrf BLAS subroutine to corresponding R region
-task helper_exp.get_R_matrix(p : int, m_vec : region(ispace(int1d), int), n : int, matrix : region(ispace(int2d), double), R_matrix : region(ispace(int2d), double))
+-- task helper_exp.get_R_matrix(p : int, m_vec : region(ispace(int1d), int), n : int, matrix : region(ispace(int2d), double), R_matrix : region(ispace(int2d), double))
 
-where reads(matrix, m_vec), writes(R_matrix)
-do
-  var r_point : int2d
-  var x_shift : int
-  var offset : int = 0
-  
-  for j = 0, p do
-    offset += m_vec[j]
-  end
+-- where reads(matrix, m_vec), writes(R_matrix)
+-- do
+--   var r_point : int2d
+--   var x_shift : int
+--   var offset : int = 0
 
-  for i in matrix do
-    x_shift = i.x - offset
-    if i.y >= x_shift then
-      r_point = {x = i.x - offset + p*n, y = i.y}
-      R_matrix[r_point] = matrix[i]
-    end
-  end
-end
+--   for j = 0, p do
+--     offset += m_vec[j]
+--   end
+
+--   for i in matrix do
+--     x_shift = i.x - offset
+--     if i.y >= x_shift then
+--       r_point = {x = i.x - offset + p*n, y = i.y}
+--       R_matrix[r_point] = matrix[i]
+--     end
+--   end
+-- end
 
 --task to copy the computed Q matrix from the dorgqr BLAS subroutine to the processor's "unique" region
 task helper_exp.get_Q_matrix(Q_matrix : region(ispace(int2d), double), temp_matrix : region(ispace(int2d), double))
@@ -217,7 +167,7 @@ task helper_exp.copy_function(source_region : region(ispace(int2d), double), des
 where reads(source_region), writes(destination_region)
 do
 
-  var x_shift : int = destination_region.bounds.lo.x - source_region.bounds.lo.x 
+  var x_shift : int = destination_region.bounds.lo.x - source_region.bounds.lo.x
 
   for i in source_region do
     destination_region[{x = i.x + x_shift, y = i.y}] = source_region[i]
